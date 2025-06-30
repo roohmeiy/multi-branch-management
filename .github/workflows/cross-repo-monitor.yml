@@ -9,23 +9,23 @@ jobs:
     env:
       REPO_A_URL: https://github.com/roohmeiy/my_ui_repo.git
       REPO_A_OWNER: roohmeiy
-      REPO_A_REPO: REPO_A
+      REPO_A_REPO: MY_UI_REPO
 
     steps:
-      - name: Checkout REPO B
+      - name: Checkout current repo
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Get REPO B latest commit
+      - name: Get current repo latest commit
         id: repob_commit
         run: echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
 
-      - name: Fetch REPO A en branch commit
+      - name: Fetch MY_UI_REPO en branch commit
         run: |
           git ls-remote $REPO_A_URL refs/heads/EN | awk '{print "EN_commit="$1}' >> $GITHUB_ENV
 
-      - name: Fetch REPO A fr branch commit
+      - name: Fetch MY_UI_REPO FR branch commit
         run: |
           git ls-remote $REPO_A_URL refs/heads/FR | awk '{print "FR_commit="$1}' >> $GITHUB_ENV
 
@@ -52,7 +52,7 @@ jobs:
         if: env.EN_commit != steps.load_prev.outputs.prev_EN_commit
         uses: peter-evans/repository-dispatch@v3
         with:
-          token: ${{ secrets.REPO_A_TOKEN }}
+          token: ${{ secrets.TOKEN }}
           repository: ${{ env.REPO_A_OWNER }}/${{ env.REPO_A_REPO }}
           event-type: deploy-EN
 
