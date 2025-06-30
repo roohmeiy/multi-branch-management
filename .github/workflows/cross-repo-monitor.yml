@@ -1,84 +1,108 @@
-name: Cross Repository Monitor
+name: Cross-Repo Monitor & Deploy
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:  
   
 env:
-  REPO_A: roohmeiy/my_ui_repo
+  REPO_A: 'roohmeiy/my_ui_repo'
+  REPO_B: 'roohmeiy/multi-branch-management'
 
 jobs:
-  monitor:
+  monitor-and-deploy:
     runs-on: ubuntu-latest
+    
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Setup Git
-        run: |
-          git config user.name "Pipeline Bot"
-          git config user.email "pipeline-bot@company.com"
-
-      - name: Clone Target Repo
-        run: git clone https://${{ secrets.TOKEN }}@github.com/${{ env.REPO_A }}.git target
-
-      - name: Check Changes
-        id: changes
-        run: |
-          cd target
-          
-          # Get current commits
-          EN_CURRENT=$(git rev-parse origin/EN 2>/dev/null || echo "none")
-          FR_CURRENT=$(git rev-parse origin/FR 2>/dev/null || echo "none")
-          
-          # Read stored commits
-          cd ..
-          if [ -f .pipeline-tracking ]; then
-            source .pipeline-tracking
-            EN_STORED=${EN_LAST_COMMIT:-none}
-            FR_STORED=${FR_LAST_COMMIT:-none}
-          else
-            # First run - create tracking file and trigger deployments
-            EN_STORED="none"
-            FR_STORED="none"
-          fi
-          
-          # Compare and set outputs
-          EN_CHANGED=$([[ "$EN_STORED" != "$EN_CURRENT" && "$EN_CURRENT" != "none" ]] && echo "true" || echo "false")
-          FR_CHANGED=$([[ "$FR_STORED" != "$FR_CURRENT" && "$FR_CURRENT" != "none" ]] && echo "true" || echo "false")
-          
-          echo "en_changed=$EN_CHANGED" >> $GITHUB_OUTPUT
-          echo "fr_changed=$FR_CHANGED" >> $GITHUB_OUTPUT
-          echo "en_current=$EN_CURRENT" >> $GITHUB_OUTPUT
-          echo "fr_current=$FR_CURRENT" >> $GITHUB_OUTPUT
-          
-          echo "EN: $EN_STORED -> $EN_CURRENT ($EN_CHANGED)"
-          echo "FR: $FR_STORED -> $FR_CURRENT ($FR_CHANGED)"
-
-      - name: Update Tracking
-        if: steps.changes.outputs.en_changed == 'true' || steps.changes.outputs.fr_changed == 'true'
-        run: |
-          cat > .pipeline-tracking << EOF
-          EN_LAST_COMMIT=${{ steps.changes.outputs.en_current }}
-          FR_LAST_COMMIT=${{ steps.changes.outputs.fr_current }}
-          EOF
-          git add .pipeline-tracking
-          git commit -m "Update tracking: EN=${{ steps.changes.outputs.en_changed }}, FR=${{ steps.changes.outputs.fr_changed }}"
-          git push
-
-      - name: Trigger EN
-        if: steps.changes.outputs.en_changed == 'true'
-        run: |
-          curl -X POST -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+    - name: Checkout repo B
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.TOKEN }}
+        fetch-depth: 0
+        
+    - name: Setup Git
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+        
+    - name: Get last check timestamp
+      id: last-check
+      run: |
+        if [ -f .last-check ]; then
+          echo "timestamp=$(cat .last-check)" >> $GITHUB_OUTPUT
+        else
+          echo "timestamp=$(date -d '1 hour ago' -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_OUTPUT
+        fi
+        
+    - name: Check repo A commits
+      id: repo-a-changes
+      run: |
+        # Get recent commits from repo A main branch
+        COMMITS=$(curl -s -H "Authorization: token ${{ secrets.TOKEN }}" \
+          "https://api.github.com/repos/${{ env.REPO_A }}/commits?sha=main&since=${{ steps.last-check.outputs.timestamp }}")
+        
+        if [ "$(echo "$COMMITS" | jq length)" -gt 0 ]; then
+          echo "has-changes=true" >> $GITHUB_OUTPUT
+          echo "Found $(echo "$COMMITS" | jq length) new commits in repo A"
+        else
+          echo "has-changes=false" >> $GITHUB_OUTPUT
+          echo "No new commits in repo A"
+        fi
+        
+    - name: Check EN branch changes
+      if: steps.repo-a-changes.outputs.has-changes == 'true'
+      id: en-changes
+      run: |
+        # Check if EN branch has commits since last check
+        COMMITS=$(curl -s -H "Authorization: token ${{ secrets.CROSS_REPO_TOKEN }}" \
+          "https://api.github.com/repos/${{ env.REPO_B }}/commits?sha=EN&since=${{ steps.last-check.outputs.timestamp }}")
+        
+        if [ "$(echo "$COMMITS" | jq length)" -gt 0 ]; then
+          echo "has-changes=true" >> $GITHUB_OUTPUT
+          echo "EN branch has changes - will trigger deployment"
+        else
+          echo "has-changes=false" >> $GITHUB_OUTPUT
+        fi
+        
+    - name: Check FR branch changes  
+      if: steps.repo-a-changes.outputs.has-changes == 'true'
+      id: fr-changes
+      run: |
+        # Check if FR branch has commits since last check
+        COMMITS=$(curl -s -H "Authorization: token ${{ secrets.CROSS_REPO_TOKEN }}" \
+          "https://api.github.com/repos/${{ env.REPO_B }}/commits?sha=FR&since=${{ steps.last-check.outputs.timestamp }}")
+        
+        if [ "$(echo "$COMMITS" | jq length)" -gt 0 ]; then
+          echo "has-changes=true" >> $GITHUB_OUTPUT
+          echo "FR branch has changes - will trigger deployment"
+        else
+          echo "has-changes=false" >> $GITHUB_OUTPUT
+        fi
+        
+    - name: Trigger EN deployment
+      if: steps.en-changes.outputs.has-changes == 'true'
+      run: |
+        curl -X POST \
+          -H "Authorization: token ${{ secrets.CROSS_REPO_TOKEN }}" \
           -H "Accept: application/vnd.github.v3+json" \
-          https://api.github.com/repos/${{ env.REPO_A }}/actions/workflows/EN-deployment.yml/dispatches \
-          -d '{"ref":"main","inputs":{"commit_hash":"${{ steps.changes.outputs.en_current }}"}}'
-
-      - name: Trigger FR
-        if: steps.changes.outputs.fr_changed == 'true'
-        run: |
-          curl -X POST -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+          "https://api.github.com/repos/${{ env.REPO_A }}/actions/workflows/EN-deployment.yml/dispatches" \
+          -d '{"ref":"main"}'
+        echo "✅ Triggered EN deployment pipeline"
+        
+    - name: Trigger FR deployment
+      if: steps.fr-changes.outputs.has-changes == 'true'
+      run: |
+        curl -X POST \
+          -H "Authorization: token ${{ secrets.CROSS_REPO_TOKEN }}" \
           -H "Accept: application/vnd.github.v3+json" \
-          https://api.github.com/repos/${{ env.REPO_A }}/actions/workflows/FR-deployment.yml/dispatches \
-          -d '{"ref":"main","inputs":{"commit_hash":"${{ steps.changes.outputs.fr_current }}"}}'
+          "https://api.github.com/repos/${{ env.REPO_A }}/actions/workflows/fr-deployment.yml/dispatches" \
+          -d '{"ref":"main"}'
+        echo "✅ Triggered FR deployment pipeline"
+        
+    - name: Update last check timestamp
+      if: always()
+      run: |
+        date -u +%Y-%m-%dT%H:%M:%SZ > .last-check
+        git add .last-check
+        if ! git diff --cached --quiet; then
+          git commit -m "Update last check timestamp [skip ci]"
+          git push origin main
+        fi
