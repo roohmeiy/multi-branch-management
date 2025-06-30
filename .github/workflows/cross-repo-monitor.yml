@@ -47,37 +47,50 @@ jobs:
         REPO_A_CHANGED=false
         REPO_B_EN_CHANGED=false
         REPO_B_FR_CHANGED=false
+        FIRST_RUN=false
         
-        # Check if Repo A main branch changed
-        if [ "${{ steps.stored-commits.outputs.repo_a_sha }}" != "${{ steps.current-commits.outputs.repo_a_sha }}" ] && [ -n "${{ steps.stored-commits.outputs.repo_a_sha }}" ]; then
-          REPO_A_CHANGED=true
-          echo "🔄 Repo A main branch has new commits"
+        # Check if this is the first run (no stored commits)
+        if [ -z "${{ steps.stored-commits.outputs.repo_a_sha }}" ]; then
+          FIRST_RUN=true
+          echo "🆕 First run detected - will deploy both EN and FR"
         fi
         
-        # Check if Repo B EN branch changed
-        if [ "${{ steps.stored-commits.outputs.repo_b_en_sha }}" != "${{ steps.current-commits.outputs.repo_b_en_sha }}" ] && [ -n "${{ steps.stored-commits.outputs.repo_b_en_sha }}" ]; then
-          REPO_B_EN_CHANGED=true
-          echo "🔄 Repo B EN branch has new commits"
+        # Check if Repo A main branch changed (or first run)
+        if [ "${{ steps.stored-commits.outputs.repo_a_sha }}" != "${{ steps.current-commits.outputs.repo_a_sha }}" ]; then
+          if [ -n "${{ steps.stored-commits.outputs.repo_a_sha }}" ]; then
+            REPO_A_CHANGED=true
+            echo "🔄 Repo A main branch has new commits"
+          fi
         fi
         
-        # Check if Repo B FR branch changed
-        if [ "${{ steps.stored-commits.outputs.repo_b_fr_sha }}" != "${{ steps.current-commits.outputs.repo_b_fr_sha }}" ] && [ -n "${{ steps.stored-commits.outputs.repo_b_fr_sha }}" ]; then
-          REPO_B_FR_CHANGED=true
-          echo "🔄 Repo B FR branch has new commits"
+        # Check if Repo B EN branch changed (or first run)
+        if [ "${{ steps.stored-commits.outputs.repo_b_en_sha }}" != "${{ steps.current-commits.outputs.repo_b_en_sha }}" ]; then
+          if [ -n "${{ steps.stored-commits.outputs.repo_b_en_sha }}" ]; then
+            REPO_B_EN_CHANGED=true
+            echo "🔄 Repo B EN branch has new commits"
+          fi
+        fi
+        
+        # Check if Repo B FR branch changed (or first run)
+        if [ "${{ steps.stored-commits.outputs.repo_b_fr_sha }}" != "${{ steps.current-commits.outputs.repo_b_fr_sha }}" ]; then
+          if [ -n "${{ steps.stored-commits.outputs.repo_b_fr_sha }}" ]; then
+            REPO_B_FR_CHANGED=true
+            echo "🔄 Repo B FR branch has new commits"
+          fi
         fi
         
         # Deployment logic: 
-        # Deploy EN if either Repo A main OR Repo B EN branch changed
-        # Deploy FR if either Repo A main OR Repo B FR branch changed
+        # Deploy EN if either Repo A main OR Repo B EN branch changed OR first run
+        # Deploy FR if either Repo A main OR Repo B FR branch changed OR first run
         EN_DEPLOY=false
         FR_DEPLOY=false
         
-        if [ "$REPO_A_CHANGED" = "true" ] || [ "$REPO_B_EN_CHANGED" = "true" ]; then
+        if [ "$FIRST_RUN" = "true" ] || [ "$REPO_A_CHANGED" = "true" ] || [ "$REPO_B_EN_CHANGED" = "true" ]; then
           EN_DEPLOY=true
           echo "✅ EN deployment will be triggered"
         fi
         
-        if [ "$REPO_A_CHANGED" = "true" ] || [ "$REPO_B_FR_CHANGED" = "true" ]; then
+        if [ "$FIRST_RUN" = "true" ] || [ "$REPO_A_CHANGED" = "true" ] || [ "$REPO_B_FR_CHANGED" = "true" ]; then
           FR_DEPLOY=true
           echo "✅ FR deployment will be triggered"
         fi
