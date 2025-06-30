@@ -26,14 +26,14 @@ jobs:
         LAST_CHECK="${{ steps.last-check.outputs.timestamp }}"
         
         # Check repo A main branch
-        REPO_A_COMMITS=$(curl -s -H "Authorization: token ${{ secrets.CROSS_REPO_TOKEN }}" \
+        REPO_A_COMMITS=$(curl -s -H "Authorization: token ${{ secrets.TOKEN }}" \
           "https://api.github.com/repos/${{ env.REPO_A }}/commits?sha=main&since=$LAST_CHECK" | jq length)
         
         if [ "$REPO_A_COMMITS" -gt 0 ]; then
           # Check EN/FR branches in repo B
-          EN_COMMITS=$(curl -s -H "Authorization: token ${{ secrets.CROSS_REPO_TOKEN }}" \
+          EN_COMMITS=$(curl -s -H "Authorization: token ${{ secrets.TOKEN }}" \
             "https://api.github.com/repos/${{ env.REPO_B }}/commits?sha=EN&since=$LAST_CHECK" | jq length)
-          FR_COMMITS=$(curl -s -H "Authorization: token ${{ secrets.CROSS_REPO_TOKEN }}" \
+          FR_COMMITS=$(curl -s -H "Authorization: token ${{ secrets.TOKEN }}" \
             "https://api.github.com/repos/${{ env.REPO_B }}/commits?sha=FR&since=$LAST_CHECK" | jq length)
           
           echo "en-deploy=$([[ $EN_COMMITS -gt 0 ]] && echo true || echo false)" >> $GITHUB_OUTPUT
@@ -45,14 +45,14 @@ jobs:
     - name: Deploy EN
       if: steps.changes.outputs.en-deploy == 'true'
       run: |
-        curl -X POST -H "Authorization: token ${{ secrets.CROSS_REPO_TOKEN }}" \
+        curl -X POST -H "Authorization: token ${{ secrets.TOKEN }}" \
           "https://api.github.com/repos/${{ env.REPO_A }}/actions/workflows/EN-deployment.yml/dispatches" \
           -d '{"ref":"main","inputs":{"triggered_by":"cross-repo-monitor","source_branch":"EN"}}'
         
     - name: Deploy FR
       if: steps.changes.outputs.fr-deploy == 'true'
       run: |
-        curl -X POST -H "Authorization: token ${{ secrets.CROSS_REPO_TOKEN }}" \
+        curl -X POST -H "Authorization: token ${{ secrets.TOKEN }}" \
           "https://api.github.com/repos/${{ env.REPO_A }}/actions/workflows/fr-deployment.yml/dispatches" \
           -d '{"ref":"main","inputs":{"triggered_by":"cross-repo-monitor","source_branch":"FR"}}'
         
