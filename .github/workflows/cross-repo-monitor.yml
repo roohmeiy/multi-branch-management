@@ -2,10 +2,7 @@ name: Cross Repository Monitor
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths: ['.github/workflows/cross-repo-monitor.yml']
-
+  
 env:
   REPO_A: roohmeiy/my_ui_repo
 
