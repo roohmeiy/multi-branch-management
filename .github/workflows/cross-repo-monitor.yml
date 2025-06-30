@@ -1,0 +1,87 @@
+name: Cross Repository Monitor
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/cross-repo-monitor.yml']
+
+env:
+  REPO_A: roohmeiy/my_ui_repo
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Git
+        run: |
+          git config user.name "Pipeline Bot"
+          git config user.email "pipeline-bot@company.com"
+
+      - name: Clone Target Repo
+        run: git clone https://${{ secrets.TOKEN }}@github.com/${{ env.REPO_A }}.git target
+
+      - name: Check Changes
+        id: changes
+        run: |
+          cd target
+          
+          # Get current commits
+          EN_CURRENT=$(git rev-parse origin/EN 2>/dev/null || echo "none")
+          FR_CURRENT=$(git rev-parse origin/FR 2>/dev/null || echo "none")
+          
+          # Read stored commits
+          cd ..
+          if [ -f .pipeline-tracking ]; then
+            source .pipeline-tracking
+            EN_STORED=${EN_LAST_COMMIT:-none}
+            FR_STORED=${FR_LAST_COMMIT:-none}
+          else
+            # First run - create tracking file and trigger deployments
+            EN_STORED="none"
+            FR_STORED="none"
+          fi
+          
+          # Compare and set outputs
+          EN_CHANGED=$([[ "$EN_STORED" != "$EN_CURRENT" && "$EN_CURRENT" != "none" ]] && echo "true" || echo "false")
+          FR_CHANGED=$([[ "$FR_STORED" != "$FR_CURRENT" && "$FR_CURRENT" != "none" ]] && echo "true" || echo "false")
+          
+          echo "en_changed=$EN_CHANGED" >> $GITHUB_OUTPUT
+          echo "fr_changed=$FR_CHANGED" >> $GITHUB_OUTPUT
+          echo "en_current=$EN_CURRENT" >> $GITHUB_OUTPUT
+          echo "fr_current=$FR_CURRENT" >> $GITHUB_OUTPUT
+          
+          echo "EN: $EN_STORED -> $EN_CURRENT ($EN_CHANGED)"
+          echo "FR: $FR_STORED -> $FR_CURRENT ($FR_CHANGED)"
+
+      - name: Update Tracking
+        if: steps.changes.outputs.en_changed == 'true' || steps.changes.outputs.fr_changed == 'true'
+        run: |
+          cat > .pipeline-tracking << EOF
+          EN_LAST_COMMIT=${{ steps.changes.outputs.en_current }}
+          FR_LAST_COMMIT=${{ steps.changes.outputs.fr_current }}
+          EOF
+          git add .pipeline-tracking
+          git commit -m "Update tracking: EN=${{ steps.changes.outputs.en_changed }}, FR=${{ steps.changes.outputs.fr_changed }}"
+          git push
+
+      - name: Trigger EN
+        if: steps.changes.outputs.en_changed == 'true'
+        run: |
+          curl -X POST -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+          -H "Accept: application/vnd.github.v3+json" \
+          https://api.github.com/repos/${{ env.REPO_A }}/actions/workflows/EN-deployment.yml/dispatches \
+          -d '{"ref":"main","inputs":{"commit_hash":"${{ steps.changes.outputs.en_current }}"}}'
+
+      - name: Trigger FR
+        if: steps.changes.outputs.fr_changed == 'true'
+        run: |
+          curl -X POST -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+          -H "Accept: application/vnd.github.v3+json" \
+          https://api.github.com/repos/${{ env.REPO_A }}/actions/workflows/FR-deployment.yml/dispatches \
+          -d '{"ref":"main","inputs":{"commit_hash":"${{ steps.changes.outputs.fr_current }}"}}'
