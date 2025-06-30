@@ -29,6 +29,11 @@ jobs:
         run: |
           git ls-remote $REPO_A_URL refs/heads/FR | awk '{print "FR_commit="$1}' >> $GITHUB_ENV
 
+      - name: Ensure previous commit files exist
+        run: |
+          touch .prev_EN_commit
+          touch .prev_FR_commit
+
       - name: Load previous commit SHAs
         id: load_prev
         run: |
