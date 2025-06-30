@@ -2,12 +2,6 @@ name: Cross-Repo Monitor
 
 on:
   workflow_dispatch:
-    inputs:
-      dry_run:
-        description: 'Dry run - only store commits, do not deploy'
-        required: false
-        default: 'false'
-        type: boolean
 
 env:
   REPO_A: 'roohmeiy/my_ui_repo'
@@ -24,114 +18,58 @@ jobs:
     - name: Get stored commit SHAs
       id: stored-commits
       run: |
-        # Get stored commit SHAs from previous run, default to empty if not exists
-        echo "repo_a_sha=$([ -f .last-repo-a-commit ] && cat .last-repo-a-commit || echo '')" >> $GITHUB_OUTPUT
-        echo "repo_b_en_sha=$([ -f .last-repo-b-en-commit ] && cat .last-repo-b-en-commit || echo '')" >> $GITHUB_OUTPUT
-        echo "repo_b_fr_sha=$([ -f .last-repo-b-fr-commit ] && cat .last-repo-b-fr-commit || echo '')" >> $GITHUB_OUTPUT
+        echo "repo_a_en_sha=$([ -f .last-repo-a-en-commit ] && cat .last-repo-a-en-commit || echo '')" >> $GITHUB_OUTPUT
+        echo "repo_a_fr_sha=$([ -f .last-repo-a-fr-commit ] && cat .last-repo-a-fr-commit || echo '')" >> $GITHUB_OUTPUT
         
     - name: Get current commit SHAs
       id: current-commits
       run: |
-        # Get current commit SHAs from all repositories
-        REPO_A_SHA=$(curl -s -H "Authorization: token ${{ secrets.TOKEN }}" \
-          "https://api.github.com/repos/${{ env.REPO_A }}/commits/main" | jq -r '.sha')
+        REPO_A_EN_SHA=$(curl -s -H "Authorization: token ${{ secrets.TOKEN }}" \
+          "https://api.github.com/repos/${{ env.REPO_A }}/commits/EN" | jq -r '.sha')
+        REPO_A_FR_SHA=$(curl -s -H "Authorization: token ${{ secrets.TOKEN }}" \
+          "https://api.github.com/repos/${{ env.REPO_A }}/commits/FR" | jq -r '.sha')
         
-        REPO_B_EN_SHA=$(curl -s -H "Authorization: token ${{ secrets.TOKEN }}" \
-          "https://api.github.com/repos/${{ env.REPO_B }}/commits/EN" | jq -r '.sha')
+        echo "repo_a_en_sha=$REPO_A_EN_SHA" >> $GITHUB_OUTPUT
+        echo "repo_a_fr_sha=$REPO_A_FR_SHA" >> $GITHUB_OUTPUT
         
-        REPO_B_FR_SHA=$(curl -s -H "Authorization: token ${{ secrets.TOKEN }}" \
-          "https://api.github.com/repos/${{ env.REPO_B }}/commits/FR" | jq -r '.sha')
-        
-        echo "repo_a_sha=$REPO_A_SHA" >> $GITHUB_OUTPUT
-        echo "repo_b_en_sha=$REPO_B_EN_SHA" >> $GITHUB_OUTPUT
-        echo "repo_b_fr_sha=$REPO_B_FR_SHA" >> $GITHUB_OUTPUT
-        
-    - name: Check for changes and determine deployments
+    - name: Check changes
       id: changes
       run: |
-        # Compare stored vs current commit SHAs
-        REPO_A_CHANGED=false
-        REPO_B_EN_CHANGED=false
-        REPO_B_FR_CHANGED=false
-        FIRST_RUN=false
-        
-        # Check if this is the first run (no stored commits)
-        if [ -z "${{ steps.stored-commits.outputs.repo_a_sha }}" ]; then
-          FIRST_RUN=true
-          echo "🆕 First run detected - will deploy both EN and FR"
+        # Check if Repo A EN branch changed
+        EN_CHANGED=false
+        if [ "${{ steps.stored-commits.outputs.repo_a_en_sha }}" != "${{ steps.current-commits.outputs.repo_a_en_sha }}" ] && [ -n "${{ steps.stored-commits.outputs.repo_a_en_sha }}" ]; then
+          EN_CHANGED=true
         fi
         
-        # Check if Repo A main branch changed (or first run)
-        if [ "${{ steps.stored-commits.outputs.repo_a_sha }}" != "${{ steps.current-commits.outputs.repo_a_sha }}" ]; then
-          if [ -n "${{ steps.stored-commits.outputs.repo_a_sha }}" ]; then
-            REPO_A_CHANGED=true
-            echo "🔄 Repo A main branch has new commits"
-          fi
+        # Check if Repo A FR branch changed
+        FR_CHANGED=false
+        if [ "${{ steps.stored-commits.outputs.repo_a_fr_sha }}" != "${{ steps.current-commits.outputs.repo_a_fr_sha }}" ] && [ -n "${{ steps.stored-commits.outputs.repo_a_fr_sha }}" ]; then
+          FR_CHANGED=true
         fi
         
-        # Check if Repo B EN branch changed (or first run)
-        if [ "${{ steps.stored-commits.outputs.repo_b_en_sha }}" != "${{ steps.current-commits.outputs.repo_b_en_sha }}" ]; then
-          if [ -n "${{ steps.stored-commits.outputs.repo_b_en_sha }}" ]; then
-            REPO_B_EN_CHANGED=true
-            echo "🔄 Repo B EN branch has new commits"
-          fi
-        fi
-        
-        # Check if Repo B FR branch changed (or first run)
-        if [ "${{ steps.stored-commits.outputs.repo_b_fr_sha }}" != "${{ steps.current-commits.outputs.repo_b_fr_sha }}" ]; then
-          if [ -n "${{ steps.stored-commits.outputs.repo_b_fr_sha }}" ]; then
-            REPO_B_FR_CHANGED=true
-            echo "🔄 Repo B FR branch has new commits"
-          fi
-        fi
-        
-        # Deployment logic: 
-        # Deploy EN if either Repo A main OR Repo B EN branch changed OR first run (unless dry_run)
-        # Deploy FR if either Repo A main OR Repo B FR branch changed OR first run (unless dry_run)
-        EN_DEPLOY=false
-        FR_DEPLOY=false
-        
-        # Skip deployment if this is a dry run
-        if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
-          echo "🧪 Dry run mode - no deployments will be triggered"
-        elif [ "$FIRST_RUN" = "true" ] || [ "$REPO_A_CHANGED" = "true" ] || [ "$REPO_B_EN_CHANGED" = "true" ]; then
-          EN_DEPLOY=true
-          echo "✅ EN deployment will be triggered"
-        fi
-        
-        if [ "${{ github.event.inputs.dry_run }}" != "true" ] && ([ "$FIRST_RUN" = "true" ] || [ "$REPO_A_CHANGED" = "true" ] || [ "$REPO_B_FR_CHANGED" = "true" ]); then
-          FR_DEPLOY=true
-          echo "✅ FR deployment will be triggered"
-        fi
-        
-        echo "en-deploy=$EN_DEPLOY" >> $GITHUB_OUTPUT
-        echo "fr-deploy=$FR_DEPLOY" >> $GITHUB_OUTPUT
+        echo "en-deploy=$EN_CHANGED" >> $GITHUB_OUTPUT
+        echo "fr-deploy=$FR_CHANGED" >> $GITHUB_OUTPUT
         
     - name: Deploy EN
       if: steps.changes.outputs.en-deploy == 'true'
       run: |
-        echo "🚀 Triggering EN deployment..."
         curl -X POST -H "Authorization: token ${{ secrets.TOKEN }}" \
           "https://api.github.com/repos/${{ env.REPO_A }}/actions/workflows/EN-deployment.yml/dispatches" \
-          -d '{"ref":"main","inputs":{"triggered_by":"cross-repo-monitor","source_branch":"EN","source_repo":"${{ env.REPO_B }}"}}'
-          
+          -d '{"ref":"main","inputs":{"triggered_by":"cross-repo-monitor","source_branch":"EN"}}'
+        
     - name: Deploy FR
       if: steps.changes.outputs.fr-deploy == 'true'
       run: |
-        echo "🚀 Triggering FR deployment..."
         curl -X POST -H "Authorization: token ${{ secrets.TOKEN }}" \
           "https://api.github.com/repos/${{ env.REPO_A }}/actions/workflows/fr-deployment.yml/dispatches" \
-          -d '{"ref":"main","inputs":{"triggered_by":"cross-repo-monitor","source_branch":"FR","source_repo":"${{ env.REPO_B }}"}}'
-          
+          -d '{"ref":"main","inputs":{"triggered_by":"cross-repo-monitor","source_branch":"FR"}}'
+        
     - name: Update stored commit SHAs
       if: always()
       run: |
-        # Store current commit SHAs for next run
-        echo "${{ steps.current-commits.outputs.repo_a_sha }}" > .last-repo-a-commit
-        echo "${{ steps.current-commits.outputs.repo_b_en_sha }}" > .last-repo-b-en-commit
-        echo "${{ steps.current-commits.outputs.repo_b_fr_sha }}" > .last-repo-b-fr-commit
+        echo "${{ steps.current-commits.outputs.repo_a_en_sha }}" > .last-repo-a-en-commit
+        echo "${{ steps.current-commits.outputs.repo_a_fr_sha }}" > .last-repo-a-fr-commit
         
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
-        git add .last-* 
-        git commit -m "Update commit tracking [skip ci]" && git push || true
+        git add .last-* && git commit -m "Update commit tracking [skip ci]" && git push || true
