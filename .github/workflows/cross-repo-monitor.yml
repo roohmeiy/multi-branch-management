@@ -61,7 +61,7 @@ jobs:
       if: steps.changes.outputs.fr-deploy == 'true'
       run: |
         curl -X POST -H "Authorization: token ${{ secrets.TOKEN }}" \
-          "https://api.github.com/repos/${{ env.REPO_A }}/actions/workflows/fr-deployment.yml/dispatches" \
+          "https://api.github.com/repos/${{ env.REPO_A }}/actions/workflows/FR-deployment.yml/dispatches" \
           -d '{"ref":"main","inputs":{"triggered_by":"cross-repo-monitor","source_branch":"FR"}}'
         
     - name: Update stored commit SHAs
