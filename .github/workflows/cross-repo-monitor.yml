@@ -4,8 +4,8 @@ on:
   workflow_dispatch:
 
 env:
-  REPO_A: 'roohmeiy/my_ui_repo'
-  REPO_B: 'roohmeiy/multi-branch-management'
+  REPO_B: 'roohmeiy/my_ui_repo'
+  REPO_A: 'roohmeiy/multi-branch-management'
 
 jobs:
   monitor-and-deploy:
