@@ -1,8 +1,8 @@
-name: Cross-Repo Monitor & Deploy
+name: Cross-Repo Monitor
 
 on:
-  workflow_dispatch:  
-  
+  workflow_dispatch:
+
 env:
   REPO_A: 'roohmeiy/my_ui_repo'
   REPO_B: 'roohmeiy/multi-branch-management'
@@ -10,99 +10,54 @@ env:
 jobs:
   monitor-and-deploy:
     runs-on: ubuntu-latest
-    
     steps:
-    - name: Checkout repo B
-      uses: actions/checkout@v4
+    - uses: actions/checkout@v4
       with:
         token: ${{ secrets.TOKEN }}
-        fetch-depth: 0
         
-    - name: Setup Git
-      run: |
-        git config --global user.name "github-actions[bot]"
-        git config --global user.email "github-actions[bot]@users.noreply.github.com"
-        
-    - name: Get last check timestamp
+    - name: Get last check
       id: last-check
       run: |
-        if [ -f .last-check ]; then
-          echo "timestamp=$(cat .last-check)" >> $GITHUB_OUTPUT
-        else
-          echo "timestamp=$(date -d '1 hour ago' -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_OUTPUT
-        fi
+        echo "timestamp=$([ -f .last-check ] && cat .last-check || date -d '1 hour ago' -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_OUTPUT
         
-    - name: Check repo A commits
-      id: repo-a-changes
+    - name: Check changes
+      id: changes
       run: |
-        # Get recent commits from repo A main branch
-        COMMITS=$(curl -s -H "Authorization: token ${{ secrets.TOKEN }}" \
-          "https://api.github.com/repos/${{ env.REPO_A }}/commits?sha=main&since=${{ steps.last-check.outputs.timestamp }}")
+        LAST_CHECK="${{ steps.last-check.outputs.timestamp }}"
         
-        if [ "$(echo "$COMMITS" | jq length)" -gt 0 ]; then
-          echo "has-changes=true" >> $GITHUB_OUTPUT
-          echo "Found $(echo "$COMMITS" | jq length) new commits in repo A"
+        # Check repo A main branch
+        REPO_A_COMMITS=$(curl -s -H "Authorization: token ${{ secrets.CROSS_REPO_TOKEN }}" \
+          "https://api.github.com/repos/${{ env.REPO_A }}/commits?sha=main&since=$LAST_CHECK" | jq length)
+        
+        if [ "$REPO_A_COMMITS" -gt 0 ]; then
+          # Check EN/FR branches in repo B
+          EN_COMMITS=$(curl -s -H "Authorization: token ${{ secrets.CROSS_REPO_TOKEN }}" \
+            "https://api.github.com/repos/${{ env.REPO_B }}/commits?sha=EN&since=$LAST_CHECK" | jq length)
+          FR_COMMITS=$(curl -s -H "Authorization: token ${{ secrets.CROSS_REPO_TOKEN }}" \
+            "https://api.github.com/repos/${{ env.REPO_B }}/commits?sha=FR&since=$LAST_CHECK" | jq length)
+          
+          echo "en-deploy=$([[ $EN_COMMITS -gt 0 ]] && echo true || echo false)" >> $GITHUB_OUTPUT
+          echo "fr-deploy=$([[ $FR_COMMITS -gt 0 ]] && echo true || echo false)" >> $GITHUB_OUTPUT
         else
-          echo "has-changes=false" >> $GITHUB_OUTPUT
-          echo "No new commits in repo A"
+          echo "en-deploy=false" >> $GITHUB_OUTPUT
+          echo "fr-deploy=false" >> $GITHUB_OUTPUT
         fi
-        
-    - name: Check EN branch changes
-      if: steps.repo-a-changes.outputs.has-changes == 'true'
-      id: en-changes
+    - name: Deploy EN
+      if: steps.changes.outputs.en-deploy == 'true'
       run: |
-        # Check if EN branch has commits since last check
-        COMMITS=$(curl -s -H "Authorization: token ${{ secrets.CROSS_REPO_TOKEN }}" \
-          "https://api.github.com/repos/${{ env.REPO_B }}/commits?sha=EN&since=${{ steps.last-check.outputs.timestamp }}")
-        
-        if [ "$(echo "$COMMITS" | jq length)" -gt 0 ]; then
-          echo "has-changes=true" >> $GITHUB_OUTPUT
-          echo "EN branch has changes - will trigger deployment"
-        else
-          echo "has-changes=false" >> $GITHUB_OUTPUT
-        fi
-        
-    - name: Check FR branch changes  
-      if: steps.repo-a-changes.outputs.has-changes == 'true'
-      id: fr-changes
-      run: |
-        # Check if FR branch has commits since last check
-        COMMITS=$(curl -s -H "Authorization: token ${{ secrets.CROSS_REPO_TOKEN }}" \
-          "https://api.github.com/repos/${{ env.REPO_B }}/commits?sha=FR&since=${{ steps.last-check.outputs.timestamp }}")
-        
-        if [ "$(echo "$COMMITS" | jq length)" -gt 0 ]; then
-          echo "has-changes=true" >> $GITHUB_OUTPUT
-          echo "FR branch has changes - will trigger deployment"
-        else
-          echo "has-changes=false" >> $GITHUB_OUTPUT
-        fi
-        
-    - name: Trigger EN deployment
-      if: steps.en-changes.outputs.has-changes == 'true'
-      run: |
-        curl -X POST \
-          -H "Authorization: token ${{ secrets.CROSS_REPO_TOKEN }}" \
-          -H "Accept: application/vnd.github.v3+json" \
+        curl -X POST -H "Authorization: token ${{ secrets.CROSS_REPO_TOKEN }}" \
           "https://api.github.com/repos/${{ env.REPO_A }}/actions/workflows/EN-deployment.yml/dispatches" \
-          -d '{"ref":"main"}'
-        echo "✅ Triggered EN deployment pipeline"
+          -d '{"ref":"main","inputs":{"triggered_by":"cross-repo-monitor","source_branch":"EN"}}'
         
-    - name: Trigger FR deployment
-      if: steps.fr-changes.outputs.has-changes == 'true'
+    - name: Deploy FR
+      if: steps.changes.outputs.fr-deploy == 'true'
       run: |
-        curl -X POST \
-          -H "Authorization: token ${{ secrets.CROSS_REPO_TOKEN }}" \
-          -H "Accept: application/vnd.github.v3+json" \
+        curl -X POST -H "Authorization: token ${{ secrets.CROSS_REPO_TOKEN }}" \
           "https://api.github.com/repos/${{ env.REPO_A }}/actions/workflows/fr-deployment.yml/dispatches" \
-          -d '{"ref":"main"}'
-        echo "✅ Triggered FR deployment pipeline"
+          -d '{"ref":"main","inputs":{"triggered_by":"cross-repo-monitor","source_branch":"FR"}}'
         
-    - name: Update last check timestamp
+    - name: Update timestamp
       if: always()
       run: |
         date -u +%Y-%m-%dT%H:%M:%SZ > .last-check
-        git add .last-check
-        if ! git diff --cached --quiet; then
-          git commit -m "Update last check timestamp [skip ci]"
-          git push origin main
-        fi
+        git add .last-check && git commit -m "Update timestamp [skip ci]" && git push || true
