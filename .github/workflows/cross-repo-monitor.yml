@@ -28,14 +28,14 @@ jobs:
       - name: Load previous SHAs
         id: load_prev
         run: |
-          if [ -f .cache/last-commits.json ]; then
+            mkdir -p .cache
+            if [ -f .cache/last-commits.json ]; then
             cat .cache/last-commits.json
-          else
-            echo '{"en":"","fr":""}' > .cache/last-commits.json
-          fi
-          echo "PREV_EN=$(jq -r '.en' .cache/last-commits.json)" >> $GITHUB_OUTPUT
-          echo "PREV_FR=$(jq -r '.fr' .cache/last-commits.json)" >> $GITHUB_OUTPUT
-
+             else
+              echo '{"en":"","fr":""}' > .cache/last-commits.json
+              fi
+              echo "PREV_EN=$(jq -r '.en' .cache/last-commits.json)" >> $GITHUB_OUTPUT
+              echo "PREV_FR=$(jq -r '.fr' .cache/last-commits.json)" >> $GITHUB_OUTPUT
       - name: Trigger deploy-en workflow if en branch changed
         if: env.EN_commit != steps.load_prev.outputs.PREV_EN
         uses: peter-evans/repository-dispatch@v3
