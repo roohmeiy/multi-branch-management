@@ -3,64 +3,51 @@ name: Cross-Repo Monitor
 on:
   workflow_dispatch:
 
+env:
+  REPO_A: 'roohmeiy/my_ui_repo'
+
 jobs:
-  monitor:
+  monitor-and-deploy:
     runs-on: ubuntu-latest
-    env:
-      REPO_A_URL: https://github.com/roohmeiy/my_ui_repo.git
-      REPO_A_OWNER: roohmeiy
-      REPO_A_REPO: my_ui_repo
-
     steps:
-      - name: Checkout current repo
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Fetch REPO A en branch commit
-        run: |
-          git ls-remote $REPO_A_URL refs/heads/en | awk '{print "EN_commit="$1}' >> $GITHUB_ENV
-
-      - name: Fetch REPO A fr branch commit
-        run: |
-          git ls-remote $REPO_A_URL refs/heads/fr | awk '{print "FR_commit="$1}' >> $GITHUB_ENV
-
-      - name: Load previous SHAs
-        id: load_prev
-        run: |
-            mkdir -p .cache
-            if [ -f .cache/last-commits.json ]; then
-            cat .cache/last-commits.json
-             else
-              echo '{"en":"","fr":""}' > .cache/last-commits.json
-              fi
-              echo "PREV_EN=$(jq -r '.en' .cache/last-commits.json)" >> $GITHUB_OUTPUT
-              echo "PREV_FR=$(jq -r '.fr' .cache/last-commits.json)" >> $GITHUB_OUTPUT
-      - name: Trigger deploy-en workflow if en branch changed
-        if: env.EN_commit != steps.load_prev.outputs.PREV_EN
-        uses: peter-evans/repository-dispatch@v3
-        with:
-          token: ${{ secrets.TOKEN }}
-          repository: ${{ env.REPO_A_OWNER }}/${{ env.REPO_A_REPO }}
-          event-type: deploy-EN
-
-      - name: Trigger deploy-fr workflow if fr branch changed
-        if: env.FR_commit != steps.load_prev.outputs.PREV_FR
-        uses: peter-evans/repository-dispatch@v3
-        with:
-          token: ${{ secrets.TOKEN }}
-          repository: ${{ env.REPO_A_OWNER }}/${{ env.REPO_A_REPO }}
-          event-type: deploy-FR
-
-      - name: Update SHAs in cache
-        run: |
-          mkdir -p .cache
-          echo "{\"en\":\"${{ env.EN_commit }}\",\"fr\":\"${{ env.FR_commit }}\"}" > .cache/last-commits.json
-
-      - name: Commit updated SHAs
-        run: |
-          git config user.name "github-actions"
-          git config user.email "github-actions@users.noreply.github.com"
-          git add .cache/last-commits.json
-          git commit -m "Update last commit SHAs [skip ci]" || echo "No changes to commit"
-          git push
+    - uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.TOKEN }}
+        
+    - name: Check and deploy changes
+      run: |
+        # Get stored commit SHAs
+        STORED_EN_SHA=$([ -f .last-repo-a-en-commit ] && cat .last-repo-a-en-commit || echo '')
+        STORED_FR_SHA=$([ -f .last-repo-a-fr-commit ] && cat .last-repo-a-fr-commit || echo '')
+        
+        # Get current commit SHAs
+        CURRENT_EN_SHA=$(curl -s -H "Authorization: token ${{ secrets.TOKEN }}" \
+          "https://api.github.com/repos/${{ env.REPO_A }}/commits/EN" | jq -r '.sha')
+        CURRENT_FR_SHA=$(curl -s -H "Authorization: token ${{ secrets.TOKEN }}" \
+          "https://api.github.com/repos/${{ env.REPO_A }}/commits/FR" | jq -r '.sha')
+        
+        # Check and deploy EN branch
+        if [ "$STORED_EN_SHA" != "$CURRENT_EN_SHA" ] && [ -n "$STORED_EN_SHA" ]; then
+          echo "🚀 Deploying EN branch..."
+          curl -X POST -H "Authorization: token ${{ secrets.TOKEN }}" \
+            "https://api.github.com/repos/${{ env.REPO_A }}/actions/workflows/EN-deployment.yml/dispatches" \
+            -d '{"ref":"main","inputs":{"triggered_by":"cross-repo-monitor","source_branch":"EN","commit_sha":"'$CURRENT_EN_SHA'"}}'
+        fi
+        
+        # Check and deploy FR branch
+        if [ "$STORED_FR_SHA" != "$CURRENT_FR_SHA" ] && [ -n "$STORED_FR_SHA" ]; then
+          echo "🚀 Deploying FR branch..."
+          curl -X POST -H "Authorization: token ${{ secrets.TOKEN }}" \
+            "https://api.github.com/repos/${{ env.REPO_A }}/actions/workflows/FR-deployment.yml/dispatches" \
+            -d '{"ref":"main","inputs":{"triggered_by":"cross-repo-monitor","source_branch":"FR","commit_sha":"'$CURRENT_FR_SHA'"}}'
+        fi
+        
+        # Update stored commit SHAs
+        echo "$CURRENT_EN_SHA" > .last-repo-a-en-commit
+        echo "$CURRENT_FR_SHA" > .last-repo-a-fr-commit
+        
+        # Commit changes
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git add .last-* && git commit -m "Update commit tracking [skip ci]" && git push || true
+        
