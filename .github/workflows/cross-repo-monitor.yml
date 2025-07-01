@@ -20,19 +20,16 @@ jobs:
     - name: Get stored commit SHAs and compare
       id: stored-commits
       run: |
-        echo "📂 Checking stored commit information..."
+        echo " Checking stored commit information..."
         STORED_EN_SHA=$([ -f .last-repo-a-en-commit ] && cat .last-repo-a-en-commit || echo '')
         STORED_FR_SHA=$([ -f .last-repo-a-fr-commit ] && cat .last-repo-a-fr-commit || echo '')
-        echo "💾 Stored EN SHA: ${STORED_EN_SHA:-'(none)'}"
-        echo "💾 Stored FR SHA: ${STORED_FR_SHA:-'(none)'}"
         echo "repo_a_en_sha=$STORED_EN_SHA" >> $GITHUB_OUTPUT
         echo "repo_a_fr_sha=$STORED_FR_SHA" >> $GITHUB_OUTPUT
 
     - name: Get current commit SHAs and messages from Repo A
       id: current-commits
       run: |
-        echo "📊 Fetching current commit SHAs from EN and FR branches..."
-
+        echo "Fetching current commit SHAs from EN and FR branches..."
         EN_INFO=$(curl -s -H "Authorization: token ${{ secrets.TOKEN }}" \
           "https://api.github.com/repos/${{ env.REPO_A }}/commits/EN")
         FR_INFO=$(curl -s -H "Authorization: token ${{ secrets.TOKEN }}" \
@@ -52,7 +49,6 @@ jobs:
       id: changes
       run: |
         echo "🔄 Checking for changes..."
-
         EN_CHANGED=false
         if [ "${{ steps.stored-commits.outputs.repo_a_en_sha }}" != "${{ steps.current-commits.outputs.repo_a_en_sha }}" ] && [ -n "${{ steps.stored-commits.outputs.repo_a_en_sha }}" ]; then
           EN_CHANGED=true
@@ -84,7 +80,7 @@ jobs:
     - name: Deploy FR
       if: steps.changes.outputs.fr-deploy == 'true'
       run: |
-        echo "🚀 Triggering FR deployment..."
+        echo " Triggering FR deployment..."
 
         curl -X POST \
           -H "Authorization: token ${{ secrets.TOKEN }}" \
