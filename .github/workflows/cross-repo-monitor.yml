@@ -3,79 +3,64 @@ name: Cross-Repo Monitor
 on:
   workflow_dispatch:
 
-env:
-  REPO_A_OWNER: roohmeiy
-  REPO_A_REPO: my_ui_repo
-
 jobs:
-  monitor-and-deploy:
+  monitor:
     runs-on: ubuntu-latest
+    env:
+      REPO_A_URL: https://github.com/roohmeiy/my_ui_repo.git
+      REPO_A_OWNER: roohmeiy
+      REPO_A_REPO: my_ui_repo
+
     steps:
-      - name: Checkout REPO B
+      - name: Checkout current repo
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.TOKEN }}
           fetch-depth: 0
 
-      - name: Monitor changes and trigger deployments
+      - name: Fetch REPO A en branch commit
         run: |
-          # Get last deployed commits from REPO B's commit history
-          LAST_EN_DEPLOY=$(git log --oneline --grep="EN:" -n 1 --pretty=format:"%s" | grep -o 'EN:[a-f0-9]\{7,\}' | cut -d: -f2 || echo '')
-          LAST_FR_DEPLOY=$(git log --oneline --grep="FR:" -n 1 --pretty=format:"%s" | grep -o 'FR:[a-f0-9]\{7,\}' | cut -d: -f2 || echo '')
-          
-          echo "Last deployed from REPO B history:"
-          echo "  EN: $LAST_EN_DEPLOY"
-          echo "  FR: $LAST_FR_DEPLOY"
-          
-          # Get current commit SHAs from REPO A branches
-          CURRENT_EN_SHA=$(curl -s -H "Authorization: token ${{ secrets.TOKEN }}" \
-            "https://api.github.com/repos/${{ env.REPO_A_OWNER }}/${{ env.REPO_A_REPO }}/commits/en" | \
-            jq -r '.sha[0:7]')
-          
-          CURRENT_FR_SHA=$(curl -s -H "Authorization: token ${{ secrets.TOKEN }}" \
-            "https://api.github.com/repos/${{ env.REPO_A_OWNER }}/${{ env.REPO_A_REPO }}/commits/fr" | \
-            jq -r '.sha[0:7]')
-          
-          echo "Current commits in REPO A:"
-          echo "  EN: $CURRENT_EN_SHA"
-          echo "  FR: $CURRENT_FR_SHA"
-          
-          # Check and trigger EN deployment if changed
-          if [ "$LAST_EN_DEPLOY" != "$CURRENT_EN_SHA" ] && [ -n "$CURRENT_EN_SHA" ]; then
-            echo "🚀 EN branch changed! Triggering EN deployment in REPO A..."
-            
-            # Trigger EN deployment workflow in REPO A main branch
-            curl -X POST \
-              -H "Authorization: token ${{ secrets.TOKEN }}" \
-              -H "Accept: application/vnd.github.v3+json" \
-              "https://api.github.com/repos/${{ env.REPO_A_OWNER }}/${{ env.REPO_A_REPO }}/actions/workflows/en-deployment.yml/dispatches" \
-              -d '{"ref":"main","inputs":{"triggered_by":"repo-b-monitor","source_branch":"en","commit_sha":"'$CURRENT_EN_SHA'"}}'
-            
-            # Record deployment in REPO B
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git commit --allow-empty -m "Deploy EN:$CURRENT_EN_SHA from REPO A [skip ci]"
-            git push
-          else
-            echo "⏸ EN branch: No changes detected"
-          fi
-          
-          # Check and trigger FR deployment if changed
-          if [ "$LAST_FR_DEPLOY" != "$CURRENT_FR_SHA" ] && [ -n "$CURRENT_FR_SHA" ]; then
-            echo " FR branch changed! Triggering FR deployment in REPO A..."
-            
-            # Trigger FR deployment workflow in REPO A main branch
-            curl -X POST \
-              -H "Authorization: token ${{ secrets.TOKEN }}" \
-              -H "Accept: application/vnd.github.v3+json" \
-              "https://api.github.com/repos/${{ env.REPO_A_OWNER }}/${{ env.REPO_A_REPO }}/actions/workflows/fr-deployment.yml/dispatches" \
-              -d '{"ref":"main","inputs":{"triggered_by":"repo-b-monitor","source_branch":"fr","commit_sha":"'$CURRENT_FR_SHA'"}}'
-            
-            # Record deployment in REPO B
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git commit --allow-empty -m "Deploy FR:$CURRENT_FR_SHA from REPO A [skip ci]"
-            git push
-          else
-            echo " FR branch: No changes detected"
-          fi
+          git ls-remote $REPO_A_URL refs/heads/en | awk '{print "EN_commit="$1}' >> $GITHUB_ENV
+
+      - name: Fetch REPO A fr branch commit
+        run: |
+          git ls-remote $REPO_A_URL refs/heads/fr | awk '{print "FR_commit="$1}' >> $GITHUB_ENV
+
+      - name: Load previous SHAs
+        id: load_prev
+        run: |
+            mkdir -p .cache
+            if [ -f .cache/last-commits.json ]; then
+            cat .cache/last-commits.json
+             else
+              echo '{"en":"","fr":""}' > .cache/last-commits.json
+              fi
+              echo "PREV_EN=$(jq -r '.en' .cache/last-commits.json)" >> $GITHUB_OUTPUT
+              echo "PREV_FR=$(jq -r '.fr' .cache/last-commits.json)" >> $GITHUB_OUTPUT
+      - name: Trigger deploy-en workflow if en branch changed
+        if: env.EN_commit != steps.load_prev.outputs.PREV_EN
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.TOKEN }}
+          repository: ${{ env.REPO_A_OWNER }}/${{ env.REPO_A_REPO }}
+          event-type: deploy-EN
+
+      - name: Trigger deploy-fr workflow if fr branch changed
+        if: env.FR_commit != steps.load_prev.outputs.PREV_FR
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.TOKEN }}
+          repository: ${{ env.REPO_A_OWNER }}/${{ env.REPO_A_REPO }}
+          event-type: deploy-FR
+
+      - name: Update SHAs in cache
+        run: |
+          mkdir -p .cache
+          echo "{\"en\":\"${{ env.EN_commit }}\",\"fr\":\"${{ env.FR_commit }}\"}" > .cache/last-commits.json
+
+      - name: Commit updated SHAs
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add .cache/last-commits.json
+          git commit -m "Update last commit SHAs [skip ci]" || echo "No changes to commit"
+          git push
