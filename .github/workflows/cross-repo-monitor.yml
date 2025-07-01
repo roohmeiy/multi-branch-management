@@ -5,6 +5,7 @@ on:
 
 env:
   REPO_A: 'roohmeiy/my_ui_repo'
+  REPO_B: 'roohmeiy/multi-branch-management'
 
 jobs:
   monitor-and-deploy:
@@ -14,40 +15,130 @@ jobs:
       with:
         token: ${{ secrets.TOKEN }}
         
-    - name: Check and deploy changes
+    - name: Get stored commit SHAs and compare
+      id: stored-commits
       run: |
-        # Get stored commit SHAs
+        echo "📂 Checking stored commit information..."
+        
         STORED_EN_SHA=$([ -f .last-repo-a-en-commit ] && cat .last-repo-a-en-commit || echo '')
         STORED_FR_SHA=$([ -f .last-repo-a-fr-commit ] && cat .last-repo-a-fr-commit || echo '')
         
-        # Get current commit SHAs
-        CURRENT_EN_SHA=$(curl -s -H "Authorization: token ${{ secrets.TOKEN }}" \
-          "https://api.github.com/repos/${{ env.REPO_A }}/commits/EN" | jq -r '.sha')
-        CURRENT_FR_SHA=$(curl -s -H "Authorization: token ${{ secrets.TOKEN }}" \
-          "https://api.github.com/repos/${{ env.REPO_A }}/commits/FR" | jq -r '.sha')
+        echo "💾 Stored EN SHA: ${STORED_EN_SHA:-'(none - first run)'}"
+        echo "💾 Stored FR SHA: ${STORED_FR_SHA:-'(none - first run)'}"
         
-        # Check and deploy EN branch
-        if [ "$STORED_EN_SHA" != "$CURRENT_EN_SHA" ] && [ -n "$STORED_EN_SHA" ]; then
-          echo "🚀 Deploying EN branch..."
-          curl -X POST -H "Authorization: token ${{ secrets.TOKEN }}" \
-            "https://api.github.com/repos/${{ env.REPO_A }}/actions/workflows/EN-deployment.yml/dispatches" \
-            -d '{"ref":"main","inputs":{"triggered_by":"cross-repo-monitor","source_branch":"EN","commit_sha":"'$CURRENT_EN_SHA'"}}'
+        echo "repo_a_en_sha=$STORED_EN_SHA" >> $GITHUB_OUTPUT
+        echo "repo_a_fr_sha=$STORED_FR_SHA" >> $GITHUB_OUTPUT
+        
+    - name: List available workflows
+      run: |
+        echo "📋 Available workflows in ${{ env.REPO_A }}:"
+        curl -s -H "Authorization: token ${{ secrets.TOKEN }}" \
+          "https://api.github.com/repos/${{ env.REPO_A }}/actions/workflows" | jq -r '.workflows[] | "- \(.name) (\(.path))"'
+        
+    - name: Get current commit SHAs and messages
+      id: current-commits
+      run: |
+        echo "📊 Fetching current commit information..."
+        
+        # Get EN branch commit info
+        EN_INFO=$(curl -s -H "Authorization: token ${{ secrets.TOKEN }}" \
+          "https://api.github.com/repos/${{ env.REPO_A }}/commits/EN")
+        REPO_A_EN_SHA=$(echo "$EN_INFO" | jq -r '.sha')
+        REPO_A_EN_MSG=$(echo "$EN_INFO" | jq -r '.commit.message' | head -n1)
+        REPO_A_EN_AUTHOR=$(echo "$EN_INFO" | jq -r '.commit.author.name')
+        REPO_A_EN_DATE=$(echo "$EN_INFO" | jq -r '.commit.author.date')
+        
+        # Get FR branch commit info  
+        FR_INFO=$(curl -s -H "Authorization: token ${{ secrets.TOKEN }}" \
+          "https://api.github.com/repos/${{ env.REPO_A }}/commits/FR")
+        REPO_A_FR_SHA=$(echo "$FR_INFO" | jq -r '.sha')
+        REPO_A_FR_MSG=$(echo "$FR_INFO" | jq -r '.commit.message' | head -n1)
+        REPO_A_FR_AUTHOR=$(echo "$FR_INFO" | jq -r '.commit.author.name')
+        REPO_A_FR_DATE=$(echo "$FR_INFO" | jq -r '.commit.author.date')
+        
+        echo "🔍 Current EN Branch:"
+        echo "   SHA: $REPO_A_EN_SHA"
+        echo "   Message: $REPO_A_EN_MSG"
+        echo "   Author: $REPO_A_EN_AUTHOR"
+        echo "   Date: $REPO_A_EN_DATE"
+        echo ""
+        echo "🔍 Current FR Branch:"
+        echo "   SHA: $REPO_A_FR_SHA"
+        echo "   Message: $REPO_A_FR_MSG"
+        echo "   Author: $REPO_A_FR_AUTHOR"
+        echo "   Date: $REPO_A_FR_DATE"
+        
+        echo "repo_a_en_sha=$REPO_A_EN_SHA" >> $GITHUB_OUTPUT
+        echo "repo_a_fr_sha=$REPO_A_FR_SHA" >> $GITHUB_OUTPUT
+        echo "repo_a_en_msg=$REPO_A_EN_MSG" >> $GITHUB_OUTPUT
+        echo "repo_a_fr_msg=$REPO_A_FR_MSG" >> $GITHUB_OUTPUT
+        
+    - name: Check changes
+      id: changes
+      run: |
+        echo "🔄 Analyzing changes..."
+        
+        # Check if Repo A EN branch changed
+        EN_CHANGED=false
+        if [ "${{ steps.stored-commits.outputs.repo_a_en_sha }}" != "${{ steps.current-commits.outputs.repo_a_en_sha }}" ] && [ -n "${{ steps.stored-commits.outputs.repo_a_en_sha }}" ]; then
+          EN_CHANGED=true
+          echo "✅ EN Branch Changed!"
+          echo "   Previous: ${{ steps.stored-commits.outputs.repo_a_en_sha }}"
+          echo "   Current:  ${{ steps.current-commits.outputs.repo_a_en_sha }}"
+          echo "   New commit: ${{ steps.current-commits.outputs.repo_a_en_msg }}"
+        else
+          echo "⏸️  EN Branch: No changes detected"
         fi
         
-        # Check and deploy FR branch
-        if [ "$STORED_FR_SHA" != "$CURRENT_FR_SHA" ] && [ -n "$STORED_FR_SHA" ]; then
-          echo "🚀 Deploying FR branch..."
-          curl -X POST -H "Authorization: token ${{ secrets.TOKEN }}" \
-            "https://api.github.com/repos/${{ env.REPO_A }}/actions/workflows/FR-deployment.yml/dispatches" \
-            -d '{"ref":"main","inputs":{"triggered_by":"cross-repo-monitor","source_branch":"FR","commit_sha":"'$CURRENT_FR_SHA'"}}'
+        # Check if Repo A FR branch changed
+        FR_CHANGED=false
+        if [ "${{ steps.stored-commits.outputs.repo_a_fr_sha }}" != "${{ steps.current-commits.outputs.repo_a_fr_sha }}" ] && [ -n "${{ steps.stored-commits.outputs.repo_a_fr_sha }}" ]; then
+          FR_CHANGED=true
+          echo "✅ FR Branch Changed!"
+          echo "   Previous: ${{ steps.stored-commits.outputs.repo_a_fr_sha }}"
+          echo "   Current:  ${{ steps.current-commits.outputs.repo_a_fr_sha }}"
+          echo "   New commit: ${{ steps.current-commits.outputs.repo_a_fr_msg }}"
+        else
+          echo "⏸️  FR Branch: No changes detected"
         fi
         
-        # Update stored commit SHAs
-        echo "$CURRENT_EN_SHA" > .last-repo-a-en-commit
-        echo "$CURRENT_FR_SHA" > .last-repo-a-fr-commit
+        echo "en-deploy=$EN_CHANGED" >> $GITHUB_OUTPUT
+        echo "fr-deploy=$FR_CHANGED" >> $GITHUB_OUTPUT
         
-        # Commit changes
+    - name: Deploy EN
+      if: steps.changes.outputs.en-deploy == 'true'
+      run: |
+        echo "🚀 Triggering EN deployment..."
+        echo "   Deploying commit: ${{ steps.current-commits.outputs.repo_a_en_msg }}"
+        echo "   SHA: ${{ steps.current-commits.outputs.repo_a_en_sha }}"
+        
+        curl -X POST -H "Authorization: token ${{ secrets.TOKEN }}" \
+          "https://api.github.com/repos/${{ env.REPO_A }}/actions/workflows/EN-deployment.yml/dispatches" \
+          -d '{"ref":"main","inputs":{"triggered_by":"cross-repo-monitor","source_branch":"EN","commit_message":"${{ steps.current-commits.outputs.repo_a_en_msg }}","commit_sha":"${{ steps.current-commits.outputs.repo_a_en_sha }}"}}'
+        
+    - name: Deploy FR
+      if: steps.changes.outputs.fr-deploy == 'true'
+      run: |
+        echo "🚀 Triggering FR deployment..."
+        echo "   Deploying commit: ${{ steps.current-commits.outputs.repo_a_fr_msg }}"
+        echo "   SHA: ${{ steps.current-commits.outputs.repo_a_fr_sha }}"
+        
+        curl -X POST -H "Authorization: token ${{ secrets.TOKEN }}" \
+          "https://api.github.com/repos/${{ env.REPO_A }}/actions/workflows/FR-deployment.yml/dispatches" \
+          -d '{"ref":"main","inputs":{"triggered_by":"cross-repo-monitor","source_branch":"FR","commit_message":"${{ steps.current-commits.outputs.repo_a_fr_msg }}","commit_sha":"${{ steps.current-commits.outputs.repo_a_fr_sha }}"}}'
+        
+    - name: Update stored commit SHAs
+      if: always()
+      run: |
+        echo "💾 Updating stored commit information..."
+        
+        echo "${{ steps.current-commits.outputs.repo_a_en_sha }}" > .last-repo-a-en-commit
+        echo "${{ steps.current-commits.outputs.repo_a_fr_sha }}" > .last-repo-a-fr-commit
+        
+        echo "📝 Stored new commit SHAs:"
+        echo "   EN: ${{ steps.current-commits.outputs.repo_a_en_sha }}"
+        echo "   FR: ${{ steps.current-commits.outputs.repo_a_fr_sha }}"
+        
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
         git add .last-* && git commit -m "Update commit tracking [skip ci]" && git push || true
-        
